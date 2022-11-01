@@ -22,6 +22,7 @@
 #include <llvm/Transforms/Scalar.h>
 #include <llvm/Transforms/Utils.h>
 
+#include <llvm/IR/Instructions.h>
 #include <llvm/IR/Function.h>
 #include <llvm/Pass.h>
 #include <llvm/Support/raw_ostream.h>
@@ -29,6 +30,7 @@
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 
+#define EXCLUDE_FNAME "llvm.dbg.value"
 
 using namespace llvm;
 static ManagedStatic<LLVMContext> GlobalContext;
@@ -56,14 +58,86 @@ char EnableFunctionOptPass::ID=0;
 ///processed by mem2reg before this pass.
 struct FuncPtrPass : public ModulePass {
   static char ID; // Pass identification, replacement for typeid
+  std::map<int, std::set<std::string>> lineno_func; // save lineno, function names
+
   FuncPtrPass() : ModulePass(ID) {}
 
+  void handleModule(Module &M) {
+    for(auto fi = M.begin(); fi != M.end(); ++fi) {
+      handleFunc(*fi);
+    }
+  }
+
+  void handleFunc(Function &func) {
+    for(auto bbi = func.begin(); bbi != func.end(); ++bbi) {
+      handleBasicBlock(*bbi);
+    }
+  }
+
+  void handleBasicBlock(BasicBlock &bb) {
+    for(auto insti = bb.begin(); insti != bb.end(); ++insti) {
+      handleInst(*insti);
+    }
+  }
+
+  void handleInst(Instruction &inst){
+    if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
+      int lineno = inst.getDebugLoc().getLine();
+      handleCallInst(lineno, callinst);
+    } 
+  }
+
+  void handleCallInst(int lineno, CallInst* callinst) {
+    Function *func = callinst->getCalledFunction();
+    if(func) {
+      std::string func_name = func->getName();
+      // errs() << " lineno : "<< lineno << "func_name: ===" << func_name;
+      if(func_name != EXCLUDE_FNAME) {
+        lineno_func[lineno].insert(func_name);
+      } else {
+        // ...
+      }
+      // func->dump();
+    } else {
+      // not directly called
+      Value* val = callinst->getCalledValue();
+      if(PHINode* phi_node = dyn_cast<PHINode>(val)) {
+        handlePHINode(lineno, phi_node);
+      }
+      // val->dump();
+    }
+  } 
+
+  void handlePHINode(int lineno, PHINode* phi_node) {
+    // auto opr = phi_node->incoming_values();
+    for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
+      if(Function* func = dyn_cast<Function>(*ui)) {
+        std::string func_name = func->getName();
+        lineno_func[lineno].insert(func_name);
+      } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
+        handlePHINode(lineno, ph_node);
+      } else {
+        errs() << "===handlePHINode else===";
+      }
+    }
+    //...
+  }
+
+  void printLinenoFunc() {
+    for(auto iter = lineno_func.begin(); iter != lineno_func.end(); ++iter) {
+      printf("%d%s", iter->first, " : ");
+      auto &func_set = iter->second;
+      for(auto iter_func = func_set.begin(); iter_func != func_set.end(); ++iter_func) {
+        if(iter_func != func_set.begin()) printf("%s", ", ");
+        printf("%s", (*iter_func).c_str());
+      }
+      printf("%s", "\n");
+    }
+  }
   
   bool runOnModule(Module &M) override {
-    errs() << "Hello: ";
-    errs().write_escaped(M.getName()) << '\n';
-    M.dump();
-    errs()<<"------------------------------\n";
+    handleModule(M);
+    printLinenoFunc();
     return false;
   }
 };
