@@ -79,12 +79,23 @@ struct FuncPtrPass : public ModulePass {
     }
   }
 
-  void handleInst(Instruction &inst){
-    if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
-      int lineno = inst.getDebugLoc().getLine();
-      if(lineno == 0) return;
-      handleCallInst(lineno, callinst);
-    } 
+  void handleInst(Instruction &inst, int lineno = 0){
+    if(lineno) {
+      if(ReturnInst* retval = dyn_cast<ReturnInst>(&inst)) {
+        Value* val = retval->getReturnValue();
+        handleValue(lineno, val);
+      } else {
+      // ... 
+      }
+    } else{
+      if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
+        int lineno = callinst->getDebugLoc().getLine();
+        if(lineno == 0) return;
+        handleCallInst(lineno, callinst);
+      } else {
+      // ...
+      }
+    }
   }
 
   void handleCallInst(int lineno, CallInst* callinst) {
@@ -93,21 +104,42 @@ struct FuncPtrPass : public ModulePass {
       if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
       // func->dump();
     } else {
-      Value* val = callinst->getCalledValue();
-      handleValue(lineno, val);
+      Value* val = callinst->getCalledOperand();
+      if(CallInst* icallinst = dyn_cast<CallInst>(val)) {
+        if(Function* callFunc = icallinst->getCalledFunction()) {
+          for(Function::iterator bb = (*callFunc).begin(); bb != (*callFunc).end(); ++bb) {
+            for(BasicBlock::iterator ins = (*bb).begin(); ins != (*bb).end(); ++ins) {
+              handleInst(*ins, lineno);
+            }
+          }
+          // handleFunc(callFunc, lineno);
+        } else {
+          handleValue(lineno, val);
+        }
+      } else {
+        handleValue(lineno, val);
+      }
       // val->dump();
     }
   }
 
   void handleValue(int lineno, Value* val) {
-    if(PHINode* phi_node = dyn_cast<PHINode>(val)) {
-      errs() << "lineno: is " << lineno << "callinst else1 ===" << *val <<"\n";
+    if(isa<PHINode>(val) && !isa<Argument>(val) && !isa<CallInst>(val) && !isa<Function>(val)) {
+      PHINode* phi_node = dyn_cast<PHINode>(val);
       handlePHINode(lineno, phi_node);
-    } else if(Argument* args = dyn_cast<Argument>(val)) {
+    } else if(isa<Argument>(val) && !isa<CallInst>(val) && !isa<Function>(val)) {
+      Argument* args = dyn_cast<Argument>(val);
       // called as args
       handleArgumentCall(lineno, args);
+    } else if(isa<CallInst>(val) && !isa<Function>(val)){
+      CallInst* callinst = dyn_cast<CallInst>(val);
+      handleCallInst(lineno, callinst);
+    } else if(isa<Function>(val)){
+      Function* func = dyn_cast<Function>(val);
+      std::string func_name = func->getName();
+      if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
     } else {
-      errs() << "callinst else ===\n";
+      // ...
     }
   }
 
@@ -115,27 +147,25 @@ struct FuncPtrPass : public ModulePass {
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
       if(Function* func = dyn_cast<Function>(*ui)) {
         std::string func_name = func->getName();
-        errs() << lineno << "------" << lineno << "====" << func_name <<"\n";
         if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
       } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
-        errs() << "lineno: is " << lineno << "handlePHINode else2 ===" << *ui <<"\n";
         handlePHINode(lineno, ph_node);
+      } else if(Argument* args = dyn_cast<Argument>(*ui)){
+        handleArgumentCall(lineno, args);
       } else {
-        errs() << "lineno: is " << lineno << "handlePHINode else3 ===" <<"\n";
-        // errs() << "===handlePHINode else===----" << *ui << "\n";
+        // ...
       }
     }
     //...
   }
 
   void handleArgumentCall(int lineno, Argument* args) {
-    int arg_pos = args->getArgNo(); // 被调用的参数的位置
+    int arg_pos = args->getArgNo(); // position
     Function* parentFunc = args->getParent();
     for(auto ui : parentFunc->users()) {
       Value* val = ui->getOperandList()[arg_pos];
       handleValue(lineno, val);
-    }
-    //... 
+    } 
   }
 
   void printLinenoFunc() {
@@ -151,8 +181,10 @@ struct FuncPtrPass : public ModulePass {
   }
   
   bool runOnModule(Module &M) override {
-    M.dump();
+    // M.dump();
+    // errs() << "-------------\n";
     handleModule(M);
+    // errs() << "-------------\n";
     printLinenoFunc();
     return false;
   }
