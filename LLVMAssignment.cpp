@@ -30,7 +30,6 @@
 #include <llvm/Bitcode/BitcodeReader.h>
 #include <llvm/Bitcode/BitcodeWriter.h>
 
-#define EXCLUDE_FNAME "llvm.dbg.value"
 
 using namespace llvm;
 static ManagedStatic<LLVMContext> GlobalContext;
@@ -63,19 +62,19 @@ struct FuncPtrPass : public ModulePass {
   FuncPtrPass() : ModulePass(ID) {}
 
   void handleModule(Module &M) {
-    for(auto fi = M.begin(); fi != M.end(); ++fi) {
+    for(Module::iterator fi = M.begin(); fi != M.end(); ++fi) {
       handleFunc(*fi);
     }
   }
 
   void handleFunc(Function &func) {
-    for(auto bbi = func.begin(); bbi != func.end(); ++bbi) {
+    for(Function::iterator bbi = func.begin(); bbi != func.end(); ++bbi) {
       handleBasicBlock(*bbi);
     }
   }
 
   void handleBasicBlock(BasicBlock &bb) {
-    for(auto insti = bb.begin(); insti != bb.end(); ++insti) {
+    for(BasicBlock::iterator insti = bb.begin(); insti != bb.end(); ++insti) {
       handleInst(*insti);
     }
   }
@@ -83,51 +82,67 @@ struct FuncPtrPass : public ModulePass {
   void handleInst(Instruction &inst){
     if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
       int lineno = inst.getDebugLoc().getLine();
+      if(lineno == 0) return;
       handleCallInst(lineno, callinst);
     } 
   }
 
   void handleCallInst(int lineno, CallInst* callinst) {
-    Function *func = callinst->getCalledFunction();
-    if(func) {
+    if(Function* func = callinst->getCalledFunction()) {
       std::string func_name = func->getName();
-      // errs() << " lineno : "<< lineno << "func_name: ===" << func_name;
-      if(func_name != EXCLUDE_FNAME) {
-        lineno_func[lineno].insert(func_name);
-      } else {
-        // ...
-      }
+      if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
       // func->dump();
     } else {
-      // not directly called
       Value* val = callinst->getCalledValue();
-      if(PHINode* phi_node = dyn_cast<PHINode>(val)) {
-        handlePHINode(lineno, phi_node);
-      }
+      handleValue(lineno, val);
       // val->dump();
     }
-  } 
+  }
+
+  void handleValue(int lineno, Value* val) {
+    if(PHINode* phi_node = dyn_cast<PHINode>(val)) {
+      errs() << "lineno: is " << lineno << "callinst else1 ===" << *val <<"\n";
+      handlePHINode(lineno, phi_node);
+    } else if(Argument* args = dyn_cast<Argument>(val)) {
+      // called as args
+      handleArgumentCall(lineno, args);
+    } else {
+      errs() << "callinst else ===\n";
+    }
+  }
 
   void handlePHINode(int lineno, PHINode* phi_node) {
-    // auto opr = phi_node->incoming_values();
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
       if(Function* func = dyn_cast<Function>(*ui)) {
         std::string func_name = func->getName();
-        lineno_func[lineno].insert(func_name);
+        errs() << lineno << "------" << lineno << "====" << func_name <<"\n";
+        if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
       } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
+        errs() << "lineno: is " << lineno << "handlePHINode else2 ===" << *ui <<"\n";
         handlePHINode(lineno, ph_node);
       } else {
-        errs() << "===handlePHINode else===";
+        errs() << "lineno: is " << lineno << "handlePHINode else3 ===" <<"\n";
+        // errs() << "===handlePHINode else===----" << *ui << "\n";
       }
     }
     //...
   }
 
+  void handleArgumentCall(int lineno, Argument* args) {
+    int arg_pos = args->getArgNo(); // 被调用的参数的位置
+    Function* parentFunc = args->getParent();
+    for(auto ui : parentFunc->users()) {
+      Value* val = ui->getOperandList()[arg_pos];
+      handleValue(lineno, val);
+    }
+    //... 
+  }
+
   void printLinenoFunc() {
-    for(auto iter = lineno_func.begin(); iter != lineno_func.end(); ++iter) {
+    for(std::map<int, std::set<std::string>>::iterator iter = lineno_func.begin(); iter != lineno_func.end(); ++iter) {
       printf("%d%s", iter->first, " : ");
-      auto &func_set = iter->second;
-      for(auto iter_func = func_set.begin(); iter_func != func_set.end(); ++iter_func) {
+      std::set<std::string> func_set = iter->second;
+      for(std::set<std::string>::iterator iter_func = func_set.begin(); iter_func != func_set.end(); ++iter_func) {
         if(iter_func != func_set.begin()) printf("%s", ", ");
         printf("%s", (*iter_func).c_str());
       }
@@ -136,6 +151,7 @@ struct FuncPtrPass : public ModulePass {
   }
   
   bool runOnModule(Module &M) override {
+    M.dump();
     handleModule(M);
     printLinenoFunc();
     return false;
