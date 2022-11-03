@@ -106,28 +106,30 @@ struct FuncPtrPass : public ModulePass {
       func->dump();
     } else {
       Value* val = callinst->getCalledOperand();
-      if(CallInst* icallinst = dyn_cast<CallInst>(val)) { // CallInst(CallInst)
+      if(CallInst* ncallinst = dyn_cast<CallInst>(val)) { // CallInst(CallInst)
         errs() << "CallInst: "; val->dump();
-        if(Function* callfunc = icallinst->getCalledFunction()) {
-          errs() << " Function CallInst: "; val->dump();
-          handleFunc(*callfunc, lineno);
-        } else {
-          Value* ival = icallinst->getCalledOperand();
-          if(PHINode* phi_node = dyn_cast<PHINode>(ival)) {
-            errs() << "PHINode CallInst: "; val->dump();
-            for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
-              if(Function* func = dyn_cast<Function>(ui)) {
-                handleFunc(*func, lineno);
-              } else {
-                ival->dump();
-              }
-            }
-          }
-        }
+        handleNestCallInst(lineno, ncallinst);
       } else {
         handleValue(lineno, val);
       }
       // val->dump();
+    }
+  }
+
+  void handleNestCallInst(int lineno, CallInst* callinst) {
+    if(Function* callfunc = callinst->getCalledFunction()) {
+      handleFunc(*callfunc, lineno);
+    } else {
+      Value* val = callinst->getCalledOperand();
+      if(PHINode* phi_node = dyn_cast<PHINode>(val)) {
+        for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
+          if(Function* func = dyn_cast<Function>(ui)) {
+            handleFunc(*func, lineno);
+          } else {
+            // val->dump();
+          }
+        }
+      }
     }
   }
 
