@@ -134,15 +134,15 @@ struct FuncPtrPass : public ModulePass {
   }
 
   void handleValue(int lineno, Value* val) {
-    if(isa<PHINode>(val) && !isa<Argument>(val) && !isa<CallInst>(val) && !isa<Function>(val)) {
+    if(isa<PHINode>(val)) {
       errs() << "PHINode: "; val->dump();
       PHINode* phi_node = dyn_cast<PHINode>(val);
       handlePHINode(lineno, phi_node);
-    } else if(isa<Argument>(val) && !isa<CallInst>(val) && !isa<Function>(val)) {
+    } else if(isa<Argument>(val)) {
       Argument* args = dyn_cast<Argument>(val);
       // called as args
       handleArgumentCall(lineno, args);
-    } else if(isa<CallInst>(val) && !isa<Function>(val)){
+    } else if(isa<CallInst>(val)){
       CallInst* callinst = dyn_cast<CallInst>(val);
       handleCallInst(lineno, callinst);
     } else if(isa<Function>(val)){
