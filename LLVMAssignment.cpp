@@ -83,40 +83,40 @@ struct FuncPtrPass : public ModulePass {
     if(lineno) {
       if(ReturnInst* retval = dyn_cast<ReturnInst>(&inst)) {
         Value* val = retval->getReturnValue();
-        handleValue(lineno, val);
+        handleValue(val, lineno);
       } else {
         // TODO: 
-        errs() << "=--====" << inst;
+        // errs() << "=--====" << inst;
       }
     } else {
       if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
         int lineno = callinst->getDebugLoc().getLine();
         if(lineno == 0) return;
-        handleCallInst(lineno, callinst);
+        handleCallInst(callinst, lineno);
       } else {
         // ...
       }
     }
   }
 
-  void handleCallInst(int lineno, CallInst* callinst) {
+  void handleCallInst(CallInst* callinst, int lineno) {
     if(Function* func = callinst->getCalledFunction()) {
       std::string func_name = func->getName();
       if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
-      func->dump();
+      // func->dump();
     } else {
       Value* val = callinst->getCalledOperand();
       if(CallInst* ncallinst = dyn_cast<CallInst>(val)) { // CallInst(CallInst)
-        errs() << "CallInst: "; val->dump();
-        handleNestCallInst(lineno, ncallinst);
+        // errs() << "CallInst: "; val->dump();
+        handleNestCallInst(ncallinst, lineno);
       } else {
-        handleValue(lineno, val);
+        handleValue(val, lineno);
       }
       // val->dump();
     }
   }
 
-  void handleNestCallInst(int lineno, CallInst* callinst) {
+  void handleNestCallInst(CallInst* callinst, int lineno) {
     if(Function* callfunc = callinst->getCalledFunction()) {
       handleFunc(*callfunc, lineno);
     } else {
@@ -133,18 +133,18 @@ struct FuncPtrPass : public ModulePass {
     }
   }
 
-  void handleValue(int lineno, Value* val) {
+  void handleValue(Value* val, int lineno) {
     if(isa<PHINode>(val)) {
-      errs() << "PHINode: "; val->dump();
+      // errs() << "PHINode: "; val->dump();
       PHINode* phi_node = dyn_cast<PHINode>(val);
-      handlePHINode(lineno, phi_node);
+      handlePHINode(phi_node, lineno);
     } else if(isa<Argument>(val)) {
       Argument* args = dyn_cast<Argument>(val);
       // called as args
-      handleArgumentCall(lineno, args);
+      handleArgumentCall(args, lineno);
     } else if(isa<CallInst>(val)){
       CallInst* callinst = dyn_cast<CallInst>(val);
-      handleCallInst(lineno, callinst);
+      handleCallInst(callinst, lineno);
     } else if(isa<Function>(val)){
       Function* func = dyn_cast<Function>(val);
       std::string func_name = func->getName();
@@ -154,23 +154,23 @@ struct FuncPtrPass : public ModulePass {
     }
   }
 
-  void handlePHINode(int lineno, PHINode* phi_node) {
+  void handlePHINode(PHINode* phi_node, int lineno) {
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
       if(Function* func = dyn_cast<Function>(*ui)) {
         std::string func_name = func->getName();
         if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
       } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
-        handlePHINode(lineno, ph_node);
+        handlePHINode(ph_node, lineno);
       } else if(Argument* args = dyn_cast<Argument>(*ui)){
-        handleArgumentCall(lineno, args);
+        handleArgumentCall(args, lineno);
       } else {
         // ...
       }
     }
   }
 
-  void handleArgumentCall(int lineno, Argument* args) {
-    errs() << "Argument" << ":"; args->dump();
+  void handleArgumentCall(Argument* args, int lineno) {
+    // errs() << "Argument" << ":"; args->dump();
     int arg_pos = args->getArgNo(); // position
     Function* parentFunc = args->getParent();
     for(User* ui : parentFunc->users()) {
@@ -178,12 +178,12 @@ struct FuncPtrPass : public ModulePass {
         PHINode* phi = dyn_cast<PHINode>(ui);
         for(User* pui : phi->users()) {
           Value* val = pui->getOperandList()[arg_pos];
-          handleValue(lineno, val);
+          handleValue(val, lineno);
         }
       } else if(isa<CallInst>(ui)) {
         CallInst* callinst = dyn_cast<CallInst>(ui);
         Value* val = callinst->getOperandList()[arg_pos];
-        handleValue(lineno, val);
+        handleValue(val, lineno);
       }
     } 
   }
@@ -201,8 +201,8 @@ struct FuncPtrPass : public ModulePass {
   }
   
   bool runOnModule(Module &M) override {
-    M.dump();
-    errs() << "-------------\n";
+    // M.dump();
+    // errs() << "-------------\n";
     handleModule(M);
     // errs() << "-------------\n";
     printLinenoFunc();
