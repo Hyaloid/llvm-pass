@@ -1,5 +1,11 @@
-mkdir bc_test && cd bc_test
-cp ../test/* .
+if [ ! -d "bc_test" ]; then
+  mkdir bc_test
+else
+  rm bc_test/*
+fi
+
+cd bc_test && cp ../test/* .
+
 test_files=$(ls ../test/)
 for file in $test_files; do
     prefix=${file:0:6}
