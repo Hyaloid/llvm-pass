@@ -85,6 +85,14 @@ struct FuncPtrPass : public ModulePass {
         Value* val = retval->getReturnValue();
         handleValue(val, lineno);
       } else {
+        if(isa<CallInst>(&inst)){
+          CallInst* callinst = dyn_cast<CallInst>(&inst);
+          if(Function* func = callinst->getCalledFunction()) {
+            handleFunc(*func, lineno);
+          } else {
+            handleCallInst(callinst, lineno);
+          }
+        }
         // TODO: 
         // errs() << "=--====" << inst;
       }
@@ -101,13 +109,14 @@ struct FuncPtrPass : public ModulePass {
 
   void handleCallInst(CallInst* callinst, int lineno) {
     if(Function* func = callinst->getCalledFunction()) {
+      // TODO 调用的函数其实是参数调用 此时要提出来处理而不是直接将函数名保存下来
+      // handleFunc(*func, lineno);
+      if(func->isIntrinsic()) return;
       std::string func_name = func->getName();
-      if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
-      // func->dump();
+      lineno_func[lineno].insert(func_name);
     } else {
       Value* val = callinst->getCalledOperand();
       if(CallInst* ncallinst = dyn_cast<CallInst>(val)) { // CallInst(CallInst)
-        // errs() << "CallInst: "; val->dump();
         handleNestCallInst(ncallinst, lineno);
       } else {
         handleValue(val, lineno);
@@ -135,7 +144,6 @@ struct FuncPtrPass : public ModulePass {
 
   void handleValue(Value* val, int lineno) {
     if(isa<PHINode>(val)) {
-      // errs() << "PHINode: "; val->dump();
       PHINode* phi_node = dyn_cast<PHINode>(val);
       handlePHINode(phi_node, lineno);
     } else if(isa<Argument>(val)) {
@@ -144,11 +152,16 @@ struct FuncPtrPass : public ModulePass {
       handleArgumentCall(args, lineno);
     } else if(isa<CallInst>(val)){
       CallInst* callinst = dyn_cast<CallInst>(val);
-      handleCallInst(callinst, lineno);
+      if(Function* func = callinst->getCalledFunction()) {
+        handleFunc(*func, lineno);
+      } else {
+        handleCallInst(callinst, lineno);
+      }
     } else if(isa<Function>(val)){
       Function* func = dyn_cast<Function>(val);
+      if(func->isIntrinsic()) return;
       std::string func_name = func->getName();
-      if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
+      lineno_func[lineno].insert(func_name);
     } else {
       // ...
     }
@@ -157,8 +170,9 @@ struct FuncPtrPass : public ModulePass {
   void handlePHINode(PHINode* phi_node, int lineno) {
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
       if(Function* func = dyn_cast<Function>(*ui)) {
+        if(func->isIntrinsic()) return;
         std::string func_name = func->getName();
-        if(!func->isIntrinsic()) lineno_func[lineno].insert(func_name);
+        lineno_func[lineno].insert(func_name);
       } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
         handlePHINode(ph_node, lineno);
       } else if(Argument* args = dyn_cast<Argument>(*ui)){
@@ -170,20 +184,25 @@ struct FuncPtrPass : public ModulePass {
   }
 
   void handleArgumentCall(Argument* args, int lineno) {
-    // errs() << "Argument" << ":"; args->dump();
     int arg_pos = args->getArgNo(); // position
     Function* parentFunc = args->getParent();
-    for(User* ui : parentFunc->users()) {
-      if(isa<PHINode>(ui)) {  // inner func phi
-        PHINode* phi = dyn_cast<PHINode>(ui);
-        for(User* pui : phi->users()) {
+    for(llvm::Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
+      User* user = dyn_cast<User>(*ui);
+      if(isa<PHINode>(user)) {  // inner func phi
+        PHINode* phi = dyn_cast<PHINode>(user);
+        for(Value::user_iterator pu = phi->user_begin(); pu != phi->user_end(); ++pu) {
+          User* pui = dyn_cast<User>(*pu);
           Value* val = pui->getOperandList()[arg_pos];
+          val->dump();
           handleValue(val, lineno);
         }
-      } else if(isa<CallInst>(ui)) {
-        CallInst* callinst = dyn_cast<CallInst>(ui);
+      } else if(isa<CallInst>(user)) {
+        CallInst* callinst = dyn_cast<CallInst>(user);
         Value* val = callinst->getOperandList()[arg_pos];
+        val->dump();
         handleValue(val, lineno);
+      } else {
+        // ...
       }
     } 
   }
