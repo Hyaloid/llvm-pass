@@ -59,7 +59,7 @@ struct FuncPtrPass : public ModulePass {
   static char ID; // Pass identification, replacement for typeid
   std::map<int, std::set<std::string>> lineno_func; // save lineno, function names
   bool in_arg_call = false;
-  Function* tmp_func;
+  CallInst* tmp_callinst;
 
   FuncPtrPass() : ModulePass(ID) {}
 
@@ -156,13 +156,14 @@ struct FuncPtrPass : public ModulePass {
         handleFunc(*func, lineno);
       } else {
         tmp_callinst = callinst;
+        in_arg_call = true;
         handleCallInst(callinst, lineno);
       }
     } else if(isa<Function>(val)){
       Function* func = dyn_cast<Function>(val);
+      std::string func_name = func->getName();
       if(func->isIntrinsic()) return;
       if(!in_arg_call) {
-        std::string func_name = func->getName();
         in_arg_call = true;
         lineno_func[lineno].insert(func_name);
       } else {
@@ -198,27 +199,25 @@ struct FuncPtrPass : public ModulePass {
         handleValue(tmp_callinst->getOperandList()[arg_pos], lineno);
         return;
       }
-      // handleValue(tmp_callinst->getOperandList()[arg_pos], lineno);
     }
-    int parent_arg_num = parentFunc->arg_size();
     for(Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
       User* user = dyn_cast<User>(*ui);
       if(isa<PHINode>(user)) {  // inner func phi
+        // TODO: 参数 phi 结点
+        in_arg_call = false;
         PHINode* phi = dyn_cast<PHINode>(user);
         for(Value::user_iterator pu = phi->user_begin(); pu != phi->user_end(); ++pu) {
           User* pui = dyn_cast<User>(*pu);
           Value* val = pui->getOperandList()[arg_pos];
-          val->dump();
+          // val->dump();
           handleValue(val, lineno);
         }
       } else if(isa<CallInst>(user)) {
         CallInst* callinst = dyn_cast<CallInst>(user);
         Function* func = callinst->getCalledFunction();
-        // TODO: 解决函数参数嵌套调用
-
         Value* val = callinst->getOperandList()[arg_pos];
         handleValue(val, lineno);
-        val->dump();
+        // val->dump();
       } else {
         // ...
       }
