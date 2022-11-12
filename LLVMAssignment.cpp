@@ -58,6 +58,8 @@ char EnableFunctionOptPass::ID=0;
 struct FuncPtrPass : public ModulePass {
   static char ID; // Pass identification, replacement for typeid
   std::map<int, std::set<std::string>> lineno_func; // save lineno, function names
+  bool in_arg_call = false;
+  Function* tmp_func;
 
   FuncPtrPass() : ModulePass(ID) {}
 
@@ -81,8 +83,8 @@ struct FuncPtrPass : public ModulePass {
 
   void handleInst(Instruction &inst, int lineno = 0){
     if(lineno) {
-      if(ReturnInst* retval = dyn_cast<ReturnInst>(&inst)) {
-        Value* val = retval->getReturnValue();
+      if(ReturnInst* retinst = dyn_cast<ReturnInst>(&inst)) {
+        Value* val = retinst->getReturnValue();
         handleValue(val, lineno);
       } else {
         if(isa<CallInst>(&inst)){
@@ -92,9 +94,9 @@ struct FuncPtrPass : public ModulePass {
           } else {
             handleCallInst(callinst, lineno);
           }
+        } else {
+          // ...
         }
-        // TODO: 
-        // errs() << "=--====" << inst;
       }
     } else {
       if(CallInst* callinst = dyn_cast<CallInst>(&inst)){
@@ -109,8 +111,6 @@ struct FuncPtrPass : public ModulePass {
 
   void handleCallInst(CallInst* callinst, int lineno) {
     if(Function* func = callinst->getCalledFunction()) {
-      // TODO 调用的函数其实是参数调用 此时要提出来处理而不是直接将函数名保存下来
-      // handleFunc(*func, lineno);
       if(func->isIntrinsic()) return;
       std::string func_name = func->getName();
       lineno_func[lineno].insert(func_name);
@@ -155,13 +155,19 @@ struct FuncPtrPass : public ModulePass {
       if(Function* func = callinst->getCalledFunction()) {
         handleFunc(*func, lineno);
       } else {
+        tmp_callinst = callinst;
         handleCallInst(callinst, lineno);
       }
     } else if(isa<Function>(val)){
       Function* func = dyn_cast<Function>(val);
       if(func->isIntrinsic()) return;
-      std::string func_name = func->getName();
-      lineno_func[lineno].insert(func_name);
+      if(!in_arg_call) {
+        std::string func_name = func->getName();
+        in_arg_call = true;
+        lineno_func[lineno].insert(func_name);
+      } else {
+        handleFunc(*func, lineno);
+      }
     } else {
       // ...
     }
@@ -186,7 +192,16 @@ struct FuncPtrPass : public ModulePass {
   void handleArgumentCall(Argument* args, int lineno) {
     int arg_pos = args->getArgNo(); // position
     Function* parentFunc = args->getParent();
-    for(llvm::Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
+    if(parentFunc->user_empty()) {
+      if(tmp_callinst != nullptr) {
+        in_arg_call = false;
+        handleValue(tmp_callinst->getOperandList()[arg_pos], lineno);
+        return;
+      }
+      // handleValue(tmp_callinst->getOperandList()[arg_pos], lineno);
+    }
+    int parent_arg_num = parentFunc->arg_size();
+    for(Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
       User* user = dyn_cast<User>(*ui);
       if(isa<PHINode>(user)) {  // inner func phi
         PHINode* phi = dyn_cast<PHINode>(user);
@@ -198,9 +213,12 @@ struct FuncPtrPass : public ModulePass {
         }
       } else if(isa<CallInst>(user)) {
         CallInst* callinst = dyn_cast<CallInst>(user);
+        Function* func = callinst->getCalledFunction();
+        // TODO: 解决函数参数嵌套调用
+
         Value* val = callinst->getOperandList()[arg_pos];
-        val->dump();
         handleValue(val, lineno);
+        val->dump();
       } else {
         // ...
       }
