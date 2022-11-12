@@ -1,3 +1,4 @@
+cd /assign/
 answer=(
     "10 : plus" \
     "22 : plus" \
