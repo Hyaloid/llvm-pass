@@ -1,2 +1,4 @@
 bc_test/
 *.idea/
+build/
+*.DS_Store
