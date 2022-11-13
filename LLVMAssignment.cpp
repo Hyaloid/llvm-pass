@@ -146,11 +146,11 @@ struct FuncPtrPass : public ModulePass {
     }
   }
 
-  void handleValue(Value* val, int lineno) {
+  void handleValue(Value* val, int lineno, int arg_pos = -1) {
     if(isa<PHINode>(val)) {
       PHINode* phi_node = dyn_cast<PHINode>(val);
       // val->dump();
-      handlePHINode(phi_node, lineno);
+      handlePHINode(phi_node, lineno, arg_pos);
     } else if(isa<Argument>(val)) {
       Argument* args = dyn_cast<Argument>(val);
       // called as args
@@ -179,9 +179,11 @@ struct FuncPtrPass : public ModulePass {
     }
   }
 
-  void handlePHINode(PHINode* phi_node, int lineno) {
+  void handlePHINode(PHINode* phi_node, int lineno, int arg_pos = -1) {
     int f_cnt = 0;
     if(first_in_phi) in_arg_call = false;
+    // int phi_num = phi_node->getNumIncomingValues();
+    // errs() << "phi_num is: " << phi_num << "\n";
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
       first_in_phi = false;
       if(Function* func = dyn_cast<Function>(*ui)) {
@@ -189,10 +191,23 @@ struct FuncPtrPass : public ModulePass {
         if(func->isIntrinsic()) return;
         std::string func_name = func->getName();
         // func->dump();
-        if(nest_phi) {
+        if(nest_phi && arg_pos != -1) {
+          // func->dump();
           // TODO 不会写啊不会写啊
+          for(Function::iterator bbi = (*func).begin(); bbi != (*func).end(); ++bbi) {
+            for(BasicBlock::iterator insti = (*bbi).begin(); insti != (*bbi).end(); ++insti) {
+              if(ReturnInst* retinst = dyn_cast<ReturnInst>(&*insti)) {
+                Value* retval = retinst->getReturnValue();
+                if(CallInst* ref = dyn_cast<CallInst>(retval)) {
+                  Value* operand = ref->getOperandList()[arg_pos];
+                  handleValue(operand, lineno);
+                }
+              }
+            }
+          }
         } else if(!in_arg_call) {
-          lineno_func[lineno].insert(func_name); 
+          // func->dump();
+          lineno_func[lineno].insert(func_name);
         } else {
           // do nothing
         }
@@ -226,11 +241,33 @@ struct FuncPtrPass : public ModulePass {
         for(Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
           User* user = dyn_cast<User>(*ui);
           if(isa<PHINode>(user)) {  // inner func phi
-            // TODO: 参数 phi 结点
+
             in_arg_call = false;
             PHINode* phi = dyn_cast<PHINode>(user);
             for(Value::user_iterator pu = phi->user_begin(); pu != phi->user_end(); ++pu) {
               User* pui = dyn_cast<User>(*pu);
+              if(CallInst* ci = dyn_cast<CallInst>(pui)) {
+                if(Function* phi_func = ci->getCalledFunction()) {
+                  for(Function::iterator bbi = (*phi_func).begin(); bbi != (*phi_func).end(); ++bbi) {
+                    for(BasicBlock::iterator insti = (*bbi).begin(); insti != (*bbi).end(); ++insti) {
+                      if(Instruction* phi_inst = dyn_cast<Instruction>(insti)) {
+                        if(PHINode* iphi_node = dyn_cast<PHINode>(phi_inst)) {
+                          for(Use* ui = iphi_node->op_begin(); ui != iphi_node->op_end(); ++ui) {
+                            if(Function* ip_func = dyn_cast<Function>(ui)) {
+                              lineno_func[lineno].insert(ip_func->getName());
+                              in_arg_call = true;
+                            } else {
+                              // do nothing
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              } else {
+                // ...
+              }
               Value* val = pui->getOperandList()[arg_pos];
               // val->dump();
               handleValue(val, lineno);
@@ -239,7 +276,7 @@ struct FuncPtrPass : public ModulePass {
             CallInst* callinst = dyn_cast<CallInst>(user);
             Function* func = callinst->getCalledFunction();
             Value* val = callinst->getOperandList()[arg_pos];
-
+            
             if(tmp_callinst != nullptr) {
               if(in_arg_call) {
                 in_arg_call = false;
@@ -247,12 +284,11 @@ struct FuncPtrPass : public ModulePass {
                 handleValue(val, lineno);
                 in_arg_call = true;
               } else {
-                handleValue(val, lineno);
+                handleValue(val, lineno, arg_pos);
               }
             } else {
               handleValue(val, lineno);
             }
-            // handleValue(val, lineno);
             // val->dump();
           } else {
             // ...
