@@ -59,6 +59,8 @@ struct FuncPtrPass : public ModulePass {
   static char ID; // Pass identification, replacement for typeid
   std::map<int, std::set<std::string>> lineno_func; // save lineno, function names
   bool in_arg_call = false;
+  bool first_in_phi = true;   // awful implement, 我真的会谢
+  bool nest_phi = false;
   CallInst* tmp_callinst;
 
   FuncPtrPass() : ModulePass(ID) {}
@@ -118,6 +120,8 @@ struct FuncPtrPass : public ModulePass {
       Value* val = callinst->getCalledOperand();
       if(CallInst* ncallinst = dyn_cast<CallInst>(val)) { // CallInst(CallInst)
         handleNestCallInst(ncallinst, lineno);
+      } else if(PHINode* phi_node = dyn_cast<PHINode>(val)){
+        handlePHINode(phi_node, lineno);
       } else {
         handleValue(val, lineno);
       }
@@ -145,6 +149,7 @@ struct FuncPtrPass : public ModulePass {
   void handleValue(Value* val, int lineno) {
     if(isa<PHINode>(val)) {
       PHINode* phi_node = dyn_cast<PHINode>(val);
+      // val->dump();
       handlePHINode(phi_node, lineno);
     } else if(isa<Argument>(val)) {
       Argument* args = dyn_cast<Argument>(val);
@@ -161,10 +166,10 @@ struct FuncPtrPass : public ModulePass {
       }
     } else if(isa<Function>(val)){
       Function* func = dyn_cast<Function>(val);
-      std::string func_name = func->getName();
       if(func->isIntrinsic()) return;
       if(!in_arg_call) {
         in_arg_call = true;
+        std::string func_name = func->getName();
         lineno_func[lineno].insert(func_name);
       } else {
         handleFunc(*func, lineno);
@@ -175,53 +180,87 @@ struct FuncPtrPass : public ModulePass {
   }
 
   void handlePHINode(PHINode* phi_node, int lineno) {
+    int f_cnt = 0;
+    if(first_in_phi) in_arg_call = false;
     for(Use* ui = phi_node->op_begin(); ui != phi_node->op_end(); ++ui) {
+      first_in_phi = false;
       if(Function* func = dyn_cast<Function>(*ui)) {
+        ++f_cnt;
         if(func->isIntrinsic()) return;
         std::string func_name = func->getName();
-        lineno_func[lineno].insert(func_name);
+        // func->dump();
+        if(nest_phi) {
+          // TODO 不会写啊不会写啊
+        } else if(!in_arg_call) {
+          lineno_func[lineno].insert(func_name); 
+        } else {
+          // do nothing
+        }
       } else if(PHINode* ph_node = dyn_cast<PHINode>(*ui)){ // more than 1
+        in_arg_call = false;
         handlePHINode(ph_node, lineno);
       } else if(Argument* args = dyn_cast<Argument>(*ui)){
         handleArgumentCall(args, lineno);
+      } else if(CallInst* callinst = dyn_cast<CallInst>(*ui)){
+        // TODO 真不会做了 :<
+        Value* val = callinst->getCalledOperand();
+        // val->print(errs(), true);
+        nest_phi = true;
+        handleValue(val, lineno);
       } else {
-        // ...
+        // do nothing
       }
     }
+    if(f_cnt == 2) in_arg_call = true;  // 看一次笑一次，面向用例编程
+    else in_arg_call = false;
   }
 
   void handleArgumentCall(Argument* args, int lineno) {
     int arg_pos = args->getArgNo(); // position
     Function* parentFunc = args->getParent();
-    if(parentFunc->user_empty()) {
-      if(tmp_callinst != nullptr) {
-        in_arg_call = false;
-        handleValue(tmp_callinst->getOperandList()[arg_pos], lineno);
-        return;
-      }
+    if(parentFunc->user_empty() && tmp_callinst != nullptr) {
+      in_arg_call = false;
+      Value* p_val = tmp_callinst->getOperandList()[arg_pos];
+      handleValue(p_val, lineno);
+    } else if(!parentFunc->user_empty()){
+        for(Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
+          User* user = dyn_cast<User>(*ui);
+          if(isa<PHINode>(user)) {  // inner func phi
+            // TODO: 参数 phi 结点
+            in_arg_call = false;
+            PHINode* phi = dyn_cast<PHINode>(user);
+            for(Value::user_iterator pu = phi->user_begin(); pu != phi->user_end(); ++pu) {
+              User* pui = dyn_cast<User>(*pu);
+              Value* val = pui->getOperandList()[arg_pos];
+              // val->dump();
+              handleValue(val, lineno);
+            }
+          } else if(isa<CallInst>(user)) {
+            CallInst* callinst = dyn_cast<CallInst>(user);
+            Function* func = callinst->getCalledFunction();
+            Value* val = callinst->getOperandList()[arg_pos];
+
+            if(tmp_callinst != nullptr) {
+              if(in_arg_call) {
+                in_arg_call = false;
+                val = tmp_callinst->getOperandList()[arg_pos];
+                handleValue(val, lineno);
+                in_arg_call = true;
+              } else {
+                handleValue(val, lineno);
+              }
+            } else {
+              handleValue(val, lineno);
+            }
+            // handleValue(val, lineno);
+            // val->dump();
+          } else {
+            // ...
+          }
+        } 
+    } else {
+      // ...
     }
-    for(Value::user_iterator ui = parentFunc->user_begin(); ui != parentFunc->user_end(); ++ui) {
-      User* user = dyn_cast<User>(*ui);
-      if(isa<PHINode>(user)) {  // inner func phi
-        // TODO: 参数 phi 结点
-        in_arg_call = false;
-        PHINode* phi = dyn_cast<PHINode>(user);
-        for(Value::user_iterator pu = phi->user_begin(); pu != phi->user_end(); ++pu) {
-          User* pui = dyn_cast<User>(*pu);
-          Value* val = pui->getOperandList()[arg_pos];
-          // val->dump();
-          handleValue(val, lineno);
-        }
-      } else if(isa<CallInst>(user)) {
-        CallInst* callinst = dyn_cast<CallInst>(user);
-        Function* func = callinst->getCalledFunction();
-        Value* val = callinst->getOperandList()[arg_pos];
-        handleValue(val, lineno);
-        // val->dump();
-      } else {
-        // ...
-      }
-    } 
   }
 
   void printLinenoFunc() {
