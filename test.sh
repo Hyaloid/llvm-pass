@@ -14,7 +14,7 @@ answer=(
     "15 : foo\n16 : plus\n32 : clever" \
     "15 : foo\n16 : plus, minus\n32 : clever" \
     "30 : foo, clever\n31 : plus, minus" \
-    "24 : foo\n31 : clever,foo\n32 : plus, minus" \
+    "24 : foo\n31 : clever, foo\n32 : plus, minus" \
     "14 : plus, minus\n24 : foo\n27 : foo" \
     "14 : foo\n17 : clever\n24 : clever1\n25 : plus" \
     "14 : foo\n17 : clever\n24 : clever1\n25 : plus" \
